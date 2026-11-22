@@ -1,4 +1,4 @@
-name: Build TapPulse Pro APK
+name: Build TapPulse Pro (Google Play AAB)
 
 on:
   push:
@@ -14,12 +14,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Verify Android SDK
+      - name: Verify Android SDK & Accept Licenses
         shell: bash
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
@@ -31,12 +31,28 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.7'
+          gradle-version: '8.11.1'
 
-      - name: Generate TapPulse Pro Android Project
+      - name: Generate Release Signing Keystore
         shell: bash
         run: |
-          mkdir -p app/src/main/java/com/tappulse/pro
+          if [ ! -f tappulse-release.jks ]; then
+            keytool -genkeypair -v \
+              -keystore tappulse-release.jks \
+              -storetype PKCS12 \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -alias tappulse_key \
+              -storepass TapPulse2026! \
+              -keypass TapPulse2026! \
+              -dname "CN=TapPulse Pro, OU=Mobile, O=TapPulse, L=Trier, ST=RP, C=DE"
+          fi
+
+      - name: Generate TapPulse Pro Android Project (Play Store Ready)
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/com/hussain/tappulse/pro
           mkdir -p app/src/main/res/drawable
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/res/xml
@@ -74,17 +90,17 @@ jobs:
           FILE_EOF
 
           # ---------------------------------------------------------
-          # 3. Root build.gradle.kts
+          # 3. Root build.gradle.kts (AGP 8.9.1 + Kotlin 2.0.21 for API 36)
           # ---------------------------------------------------------
           cat << 'FILE_EOF' > build.gradle.kts
           plugins {
-              id("com.android.application") version "8.5.2" apply false
-              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+              id("com.android.application") version "8.9.1" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
           }
           FILE_EOF
 
           # ---------------------------------------------------------
-          # 4. App build.gradle.kts
+          # 4. App build.gradle.kts (Signed Release AAB + API 36)
           # ---------------------------------------------------------
           cat << 'FILE_EOF' > app/build.gradle.kts
           plugins {
@@ -93,20 +109,30 @@ jobs:
           }
 
           android {
-              namespace = "com.tappulse.pro"
-              compileSdk = 34
+              namespace = "com.hussain.tappulse.pro"
+              compileSdk = 36
 
               defaultConfig {
-                  applicationId = "com.tappulse.pro"
+                  applicationId = "com.hussain.tappulse.pro"
                   minSdk = 26
-                  targetSdk = 34
+                  targetSdk = 36
                   versionCode = 1
                   versionName = "1.0.0"
+              }
+
+              signingConfigs {
+                  create("release") {
+                      storeFile = file("../tappulse-release.jks")
+                      storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "TapPulse2026!"
+                      keyAlias = System.getenv("KEY_ALIAS") ?: "tappulse_key"
+                      keyPassword = System.getenv("KEY_PASSWORD") ?: "TapPulse2026!"
+                  }
               }
 
               buildTypes {
                   release {
                       isMinifyEnabled = false
+                      signingConfig = signingConfigs.getByName("release")
                   }
               }
 
@@ -121,7 +147,7 @@ jobs:
           }
 
           dependencies {
-              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.core:core-ktx:1.15.0")
               implementation("androidx.appcompat:appcompat:1.7.0")
               implementation("com.google.android.material:material:1.12.0")
           }
@@ -145,8 +171,7 @@ jobs:
 
                   <activity
                       android:name=".MainActivity"
-                      android:exported="true"
-                      android:screenOrientation="portrait">
+                      android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -170,13 +195,13 @@ jobs:
           FILE_EOF
 
           # ---------------------------------------------------------
-          # 6. Resources (strings, themes, accessibility config, icon)
+          # 6. Resources (Play Store Compliant Strings & Icon)
           # ---------------------------------------------------------
           cat << 'FILE_EOF' > app/src/main/res/values/strings.xml
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <string name="app_name">TapPulse Pro</string>
-              <string name="accessibility_desc">تُستخدم خدمة إمكانية الوصول لتنفيذ ضغطات النقر التلقائي على النقطة التي تحددها فوق تطبيقات البث المباشر مثل تيك توك.</string>
+              <string name="accessibility_desc">يستخدم TapPulse Pro خدمة إمكانية الوصول لتنفيذ النقرات التلقائية على النقطة التي تحددها على الشاشة فقط. لا يقوم التطبيق بجمع أو قراءة أو مشاركة أي بيانات شخصية أو حساسة.</string>
           </resources>
           FILE_EOF
 
@@ -231,35 +256,35 @@ jobs:
           # ---------------------------------------------------------
           # 7. TapConfig.kt (Shared Settings Manager)
           # ---------------------------------------------------------
-          cat << 'FILE_EOF' > app/src/main/java/com/tappulse/pro/TapConfig.kt
-          package com.tappulse.pro
+          cat << 'FILE_EOF' > app/src/main/java/com/hussain/tappulse/pro/TapConfig.kt
+          package com.hussain.tappulse.pro
 
           import android.content.Context
 
           object TapConfig {
               private const val PREFS_NAME = "tappulse_prefs"
               private const val KEY_SPEED_MS = "speed_ms"
-              private const val KEY_ANTI_BAN = "anti_ban"
+              private const val KEY_NATURAL_JITTER = "natural_jitter"
               private const val KEY_AUTO_STOP = "auto_stop"
               private const val KEY_PRESET = "preset"
 
               var speedMs: Long = 75L
-              var antiBan: Boolean = true
+              var naturalJitter: Boolean = true
               var autoStopLimit: Int = 0
-              var preset: String = "tiktok"
+              var preset: String = "balanced"
 
               fun load(context: Context) {
                   val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                   speedMs = prefs.getLong(KEY_SPEED_MS, 75L)
-                  antiBan = prefs.getBoolean(KEY_ANTI_BAN, true)
+                  naturalJitter = prefs.getBoolean(KEY_NATURAL_JITTER, true)
                   autoStopLimit = prefs.getInt(KEY_AUTO_STOP, 0)
-                  preset = prefs.getString(KEY_PRESET, "tiktok") ?: "tiktok"
+                  preset = prefs.getString(KEY_PRESET, "balanced") ?: "balanced"
               }
 
               fun save(context: Context) {
                   context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
                       .putLong(KEY_SPEED_MS, speedMs)
-                      .putBoolean(KEY_ANTI_BAN, antiBan)
+                      .putBoolean(KEY_NATURAL_JITTER, naturalJitter)
                       .putInt(KEY_AUTO_STOP, autoStopLimit)
                       .putString(KEY_PRESET, preset)
                       .apply()
@@ -270,8 +295,8 @@ jobs:
           # ---------------------------------------------------------
           # 8. TapAccessibilityService.kt (Floating Overlay + Real Taps)
           # ---------------------------------------------------------
-          cat << 'FILE_EOF' > app/src/main/java/com/tappulse/pro/TapAccessibilityService.kt
-          package com.tappulse.pro
+          cat << 'FILE_EOF' > app/src/main/java/com/hussain/tappulse/pro/TapAccessibilityService.kt
+          package com.hussain.tappulse.pro
 
           import android.accessibilityservice.AccessibilityService
           import android.accessibilityservice.GestureDescription
@@ -330,14 +355,14 @@ jobs:
                           stopClicking()
                           Toast.makeText(
                               this@TapAccessibilityService,
-                              "اكتمل الهدف ($limit ضغطة) وتم الإيقاف تلقائياً 🎯",
+                              "اكتمل الهدف ($limit نقرة) وتم الإيقاف تلقائياً 🎯",
                               Toast.LENGTH_SHORT
                           ).show()
                           return
                       }
 
                       val baseSpeed = TapConfig.speedMs
-                      val nextDelay = if (TapConfig.antiBan) {
+                      val nextDelay = if (TapConfig.naturalJitter) {
                           val jitter = (baseSpeed * 0.28).toLong().coerceAtLeast(10L)
                           (baseSpeed + Random.nextLong(-jitter, jitter + 1)).coerceAtLeast(20L)
                       } else {
@@ -355,7 +380,7 @@ jobs:
               }
 
               override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-                  // Not needed; gestures are triggered via floating overlay
+                  // No screen content is read or collected
               }
 
               override fun onInterrupt() {
@@ -478,7 +503,6 @@ jobs:
                       }
                   }
 
-                  // Top drag handle bar
                   val handleBar = View(this).apply {
                       background = GradientDrawable().apply {
                           cornerRadius = dp(4).toFloat()
@@ -489,8 +513,7 @@ jobs:
                       bottomMargin = dp(8)
                   })
 
-                  // Play / Pause Button
-                  val btnPlay = createPillCircleButton("▶", "#22D3EE", "#0B0F19", 44).apply {
+                  val btnPlay = createPillCircleButton("▶", "#22D3EE", "#0B0F19").apply {
                       setOnClickListener {
                           if (isRunning) stopClicking() else startClicking()
                       }
@@ -500,14 +523,12 @@ jobs:
                       bottomMargin = dp(8)
                   })
 
-                  // Extra expandable controls
                   val extras = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       gravity = Gravity.CENTER_HORIZONTAL
                   }
 
-                  // Lock / Unlock button
-                  val btnLock = createPillCircleButton("🔓", "#1E293B", "#FFFFFF", 40).apply {
+                  val btnLock = createPillCircleButton("🔓", "#1E293B", "#FFFFFF").apply {
                       setOnClickListener { toggleLock() }
                   }
                   lockBtn = btnLock
@@ -515,8 +536,7 @@ jobs:
                       bottomMargin = dp(8)
                   })
 
-                  // Close overlay button
-                  val btnClose = createPillCircleButton("✕", "#3F1D2E", "#FB7185", 40).apply {
+                  val btnClose = createPillCircleButton("✕", "#3F1D2E", "#FB7185").apply {
                       setOnClickListener { hideOverlay() }
                   }
                   extras.addView(btnClose, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
@@ -526,8 +546,7 @@ jobs:
                   extraControlsContainer = extras
                   pill.addView(extras)
 
-                  // Minimize / Expand button
-                  val btnMin = createPillCircleButton("▲", "#1E293B", "#CBD5E1", 34).apply {
+                  val btnMin = createPillCircleButton("▲", "#1E293B", "#CBD5E1").apply {
                       textSize = 11f
                       setOnClickListener { toggleMinimize() }
                   }
@@ -546,14 +565,13 @@ jobs:
                       y = dp(220)
                   }
 
-                  // Make the entire pill draggable when dragged
                   var initialX = 0
                   var initialY = 0
                   var initialTouchX = 0f
                   var initialTouchY = 0f
                   var isDragging = false
 
-                  val dragListener = View.OnTouchListener { v, event ->
+                  pill.setOnTouchListener { v, event ->
                       when (event.action) {
                           MotionEvent.ACTION_DOWN -> {
                               initialX = params.x
@@ -588,14 +606,13 @@ jobs:
                           else -> false
                       }
                   }
-                  pill.setOnTouchListener(dragListener)
 
                   pillView = pill
                   pillParams = params
                   windowManager.addView(pill, params)
               }
 
-              private fun createPillCircleButton(label: String, bgHex: String, textHex: String, sizeDp: Int): TextView {
+              private fun createPillCircleButton(label: String, bgHex: String, textHex: String): TextView {
                   return TextView(this).apply {
                       text = label
                       textSize = 15f
@@ -669,7 +686,6 @@ jobs:
                   minimizeBtn?.text = if (isMinimized) "▼" else "▲"
               }
 
-              // Crucial: Makes the crosshair pass taps directly through to TikTok underneath!
               private fun updateTargetTouchability(passThrough: Boolean) {
                   val view = targetView ?: return
                   val params = targetParams ?: return
@@ -694,14 +710,13 @@ jobs:
                   var tapX = location[0] + (view.width / 2f)
                   var tapY = location[1] + (view.height / 2f)
 
-                  // Apply Anti-Ban Human Spatial Jitter
-                  if (TapConfig.antiBan) {
+                  if (TapConfig.naturalJitter) {
                       tapX = (tapX + Random.nextFloat() * 14f - 7f).coerceAtLeast(1f)
                       tapY = (tapY + Random.nextFloat() * 14f - 7f).coerceAtLeast(1f)
                   }
 
                   val path = Path().apply { moveTo(tapX, tapY) }
-                  val duration = if (TapConfig.antiBan) Random.nextLong(18L, 38L) else 20L
+                  val duration = if (TapConfig.naturalJitter) Random.nextLong(18L, 38L) else 20L
                   val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
                   val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
@@ -712,10 +727,10 @@ jobs:
           FILE_EOF
 
           # ---------------------------------------------------------
-          # 9. MainActivity.kt (Sleek Dark Glassmorphism Dashboard)
+          # 9. MainActivity.kt (Play Compliant + Prominent Disclosure + API 36 Edge-to-Edge)
           # ---------------------------------------------------------
-          cat << 'FILE_EOF' > app/src/main/java/com/tappulse/pro/MainActivity.kt
-          package com.tappulse.pro
+          cat << 'FILE_EOF' > app/src/main/java/com/hussain/tappulse/pro/MainActivity.kt
+          package com.hussain.tappulse.pro
 
           import android.content.Intent
           import android.graphics.Color
@@ -731,7 +746,10 @@ jobs:
           import android.widget.SeekBar
           import android.widget.TextView
           import android.widget.Toast
+          import androidx.appcompat.app.AlertDialog
           import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.view.ViewCompat
+          import androidx.core.view.WindowInsetsCompat
           import com.google.android.material.switchmaterial.SwitchMaterial
 
           class MainActivity : AppCompatActivity() {
@@ -741,7 +759,7 @@ jobs:
               private lateinit var accessStatusText: TextView
               private lateinit var speedLabel: TextView
               private lateinit var speedSeekBar: SeekBar
-              private lateinit var antiBanSwitch: SwitchMaterial
+              private lateinit var naturalJitterSwitch: SwitchMaterial
               private lateinit var launchBtn: TextView
 
               private val presetButtons = mutableMapOf<String, LinearLayout>()
@@ -751,7 +769,16 @@ jobs:
                   super.onCreate(savedInstanceState)
                   TapConfig.load(this)
                   window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
-                  setContentView(buildDashboardUI())
+                  val rootView = buildDashboardUI()
+                  setContentView(rootView)
+
+                  // Handle Android 15/16 Edge-to-Edge system bars cleanly
+                  ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, insets ->
+                      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                      view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                      insets
+                  }
+
                   refreshConfigUI()
               }
 
@@ -770,6 +797,23 @@ jobs:
                           setStroke(dp(strokeDp), Color.parseColor(strokeHex))
                       }
                   }
+              }
+
+              // Mandatory Google Play Prominent Disclosure for AccessibilityService
+              private fun showAccessibilityDisclosureDialog() {
+                  AlertDialog.Builder(this)
+                      .setTitle("إفصاح خدمة إمكانية الوصول")
+                      .setMessage(
+                          "يحتاج تطبيق TapPulse Pro إلى إذن خدمة إمكانية الوصول (AccessibilityService API) لتنفيذ الميزة الأساسية للتطبيق، وهي تنفيذ النقرات التلقائية على النقطة التي تحددها على الشاشة.\n\n" +
+                          "• لا يقوم التطبيق بجمع أو قراءة أو تخزين أو مشاركة أي بيانات شخصية أو حساسة.\n" +
+                          "• يمكنك إيقاف الخدمة في أي وقت من إعدادات جهازك."
+                      )
+                      .setPositiveButton("موافق والمتابعة") { _, _ ->
+                          Toast.makeText(this, "اختر TapPulse Pro من القائمة وفعّله", Toast.LENGTH_LONG).show()
+                          startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                      }
+                      .setNegativeButton("رفض", null)
+                      .show()
               }
 
               private fun buildDashboardUI(): View {
@@ -803,7 +847,7 @@ jobs:
                       setTextColor(Color.WHITE)
                   }
                   val subText = TextView(this).apply {
-                      text = "النقر التلقائي الذكي للايفات تيك توك"
+                      text = "النقر التلقائي الذكي للشاشة"
                       textSize = 12f
                       setTextColor(Color.parseColor("#94A3B8"))
                   }
@@ -826,12 +870,12 @@ jobs:
                   ).apply { bottomMargin = dp(24) })
 
                   // --- Section 1: Permissions ---
-                  content.addView(sectionHeader("1. أذونات العمل بالخلفية (مطلوبة)"))
+                  content.addView(sectionHeader("1. أذونات التشغيل (مطلوبة)"))
 
                   overlayStatusText = TextView(this)
                   content.addView(permissionCard(
                       title = "الظهور فوق التطبيقات",
-                      subtitle = "لإظهار المؤشر العائم وشريط التحكم فوق تيك توك",
+                      subtitle = "لإظهار المؤشر العائم وشريط التحكم على الشاشة",
                       statusView = overlayStatusText
                   ) {
                       val intent = Intent(
@@ -844,11 +888,10 @@ jobs:
                   accessStatusText = TextView(this)
                   content.addView(permissionCard(
                       title = "خدمة إمكانية الوصول",
-                      subtitle = "لتنفيذ ضغطات اللايك تلقائياً بالخلفية",
+                      subtitle = "لتنفيذ النقرات التلقائية على النقطة المحددة",
                       statusView = accessStatusText
                   ) {
-                      Toast.makeText(this, "اختر TapPulse Pro من القائمة وفعّله", Toast.LENGTH_LONG).show()
-                      startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                      showAccessibilityDisclosureDialog()
                   })
 
                   // --- Section 2: Presets ---
@@ -860,8 +903,8 @@ jobs:
                       orientation = LinearLayout.HORIZONTAL
                   }
                   val presets = listOf(
-                      Triple("tiktok", "🛡️ لايف آمن", "مضاد للحظر"),
-                      Triple("turbo", "⚡ تيربو", "أقصى سرعة"),
+                      Triple("balanced", "🛡️ متوازن", "نقر طبيعي"),
+                      Triple("turbo", "⚡ سريع", "أقصى سرعة"),
                       Triple("custom", "🎛️ مخصص", "تحكم يدوي")
                   )
                   presets.forEachIndexed { idx, (id, title, sub) ->
@@ -921,7 +964,7 @@ jobs:
                   settingsCard.addView(speedHeader)
 
                   speedSeekBar = SeekBar(this).apply {
-                      max = 45 // 25ms to 250ms in steps of 5ms
+                      max = 45
                       setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                           override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                               val ms = 25L + (progress * 5L)
@@ -947,34 +990,34 @@ jobs:
                       bottomMargin = dp(16)
                   })
 
-                  // Anti-Ban Switch Row
-                  val antiBanRow = LinearLayout(this).apply {
+                  // Natural Jitter Switch Row
+                  val jitterRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER_VERTICAL
                   }
-                  val antiBanTextBox = LinearLayout(this).apply {
+                  val jitterTextBox = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                   }
-                  antiBanTextBox.addView(TextView(this).apply {
-                      text = "التشتيت البشري الذكي (مضاد للحظر)"
+                  jitterTextBox.addView(TextView(this).apply {
+                      text = "توزيع النقر العشوائي الطبيعي"
                       textSize = 13f
                       typeface = Typeface.DEFAULT_BOLD
                       setTextColor(Color.WHITE)
                   })
-                  antiBanTextBox.addView(TextView(this).apply {
-                      text = "يغيّر مكان وتوقيت الضغطة بشكل طفيف لكي لا يتجمد عدّاد اللايكات"
+                  jitterTextBox.addView(TextView(this).apply {
+                      text = "يغيّر مكان وتوقيت النقرة بشكل طفيف لمحاكاة اللمس الطبيعي"
                       textSize = 11f
                       setTextColor(Color.parseColor("#94A3B8"))
                   })
-                  antiBanSwitch = SwitchMaterial(this).apply {
+                  naturalJitterSwitch = SwitchMaterial(this).apply {
                       setOnCheckedChangeListener { _, isChecked ->
-                          TapConfig.antiBan = isChecked
+                          TapConfig.naturalJitter = isChecked
                           TapConfig.save(this@MainActivity)
                       }
                   }
-                  antiBanRow.addView(antiBanTextBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                  antiBanRow.addView(antiBanSwitch)
-                  settingsCard.addView(antiBanRow, LinearLayout.LayoutParams(
+                  jitterRow.addView(jitterTextBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                  jitterRow.addView(naturalJitterSwitch)
+                  settingsCard.addView(jitterRow, LinearLayout.LayoutParams(
                       LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
                   ).apply { bottomMargin = dp(18) })
 
@@ -991,7 +1034,7 @@ jobs:
                   val chipRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                   }
-                  val limits = listOf(0 to "بلا حد", 100 to "100 لايك", 500 to "500 لايك", 1000 to "1000 لايك")
+                  val limits = listOf(0 to "بلا حد", 100 to "100 نقرة", 500 to "500 نقرة", 1000 to "1000 نقرة")
                   limits.forEachIndexed { idx, (limit, label) ->
                       val chip = TextView(this).apply {
                           text = label
@@ -1099,9 +1142,9 @@ jobs:
               private fun selectPreset(preset: String) {
                   TapConfig.preset = preset
                   when (preset) {
-                      "tiktok" -> {
+                      "balanced" -> {
                           TapConfig.speedMs = 75L
-                          TapConfig.antiBan = true
+                          TapConfig.naturalJitter = true
                       }
                       "turbo" -> {
                           TapConfig.speedMs = 30L
@@ -1115,7 +1158,7 @@ jobs:
                   speedSeekBar.progress = ((TapConfig.speedMs - 25L) / 5L).toInt().coerceIn(0, 45)
                   val cps = (1000 / TapConfig.speedMs).toInt()
                   speedLabel.text = "${TapConfig.speedMs} ملي ثانية (~$cps/ث)"
-                  antiBanSwitch.isChecked = TapConfig.antiBan
+                  naturalJitterSwitch.isChecked = TapConfig.naturalJitter
                   updatePresetStyles()
                   updateTimerChipStyles()
               }
@@ -1175,7 +1218,7 @@ jobs:
                   }
                   val service = TapAccessibilityService.instance
                   if (service == null) {
-                      Toast.makeText(this, "فعّل خدمة إمكانية الوصول لـ TapPulse Pro أولاً", Toast.LENGTH_SHORT).show()
+                      showAccessibilityDisclosureDialog()
                       return
                   }
 
@@ -1185,18 +1228,25 @@ jobs:
                   } else {
                       service.showOverlay()
                       refreshPermissionStatuses()
-                      Toast.makeText(this, "تم تفعيل المؤشر! افتح لايف تيك توك الآن 🚀", Toast.LENGTH_LONG).show()
+                      Toast.makeText(this, "تم تفعيل المؤشر العائم بنجاح 🚀", Toast.LENGTH_LONG).show()
                       moveTaskToBack(true)
                   }
               }
           }
           FILE_EOF
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon
+      - name: Build Signed Release AAB
+        run: gradle bundleRelease --no-daemon
 
-      - name: Upload TapPulsePro APK
+      - name: Upload Google Play AAB
         uses: actions/upload-artifact@v4
         with:
-          name: TapPulsePro-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: TapPulsePro-GooglePlay-AAB
+          path: app/build/outputs/bundle/release/app-release.aab
+
+      - name: Upload Release Keystore (KEEP SAFE!)
+        uses: actions/upload-artifact@v4
+        with:
+          name: TapPulsePro-Keystore-KEEP-SAFE
+          path: tappulse-release.jks
+
